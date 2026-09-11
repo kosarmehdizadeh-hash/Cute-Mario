@@ -21,11 +21,11 @@ OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "sfx")
 # name -> (prompt, duration_seconds, prompt_influence)
 SOUNDS = {
     "jump":        ("a short cute cartoonish boing jump sound effect for a kids video game, "
-                     "bouncy, playful, high-pitched, quick pop", 0.4, 0.4),
+                     "bouncy, playful, high-pitched, quick pop", 0.5, 0.4),
     "double-jump": ("a short cute cartoonish airy whoosh double-jump sound effect for a kids "
-                     "video game, higher pitched and lighter than a regular jump, playful", 0.4, 0.4),
+                     "video game, higher pitched and lighter than a regular jump, playful", 0.5, 0.4),
     "coin":        ("a short bright cheerful coin collect chime for a kids video game, "
-                     "sparkly bell-like ding, like picking up a star", 0.4, 0.3),
+                     "sparkly bell-like ding, like picking up a star", 0.5, 0.3),
     "hazard":      ("a short cartoonish comedic boom explosion sound effect for a kids video "
                      "game, soft and bouncy, not scary, a low thud with a puff of air", 0.6, 0.4),
     "stage-clear": ("a short cheerful triumphant two-note chime jingle for clearing a level in "

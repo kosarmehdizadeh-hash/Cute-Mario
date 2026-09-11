@@ -1,11 +1,12 @@
 name: Deploy to server
 
-# Runs on every push to these branches, or manually from the Actions tab.
+# Runs on every push to any claude/* branch (covers every future session's
+# branch automatically, without needing to edit this file each time), or
+# manually from the Actions tab.
 on:
   push:
     branches:
-      - claude/festive-pasteur-rbjsim
-      - claude/nifty-galileo-29iff7
+      - 'claude/**'
   workflow_dispatch:
 
 jobs:

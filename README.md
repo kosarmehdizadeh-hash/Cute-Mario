@@ -37,7 +37,8 @@ See the numbered section comments inside the `<script>` tag in `index.html` for 
 ## Deploying to your own server
 
 This repo includes a GitHub Actions workflow (`.github/workflows/deploy.yml`) that
-copies the project files to a server over SSH/rsync on every push.
+copies the project files to a server over SCP/SSH on every push, using a
+password login.
 
 To enable it, add these repository secrets under
 **Settings → Secrets and variables → Actions → New repository secret**:
@@ -46,14 +47,15 @@ To enable it, add these repository secrets under
 | --- | --- |
 | `SSH_HOST` | Server IP or domain |
 | `SSH_USER` | SSH username |
+| `SSH_PASSWORD` | SSH password for `SSH_USER` |
 | `SSH_PORT` | SSH port (usually `22`) |
-| `SSH_PRIVATE_KEY` | Private key (PEM format) whose matching public key is in the server's `~/.ssh/authorized_keys` for `SSH_USER` |
-| `DEPLOY_PATH` | Absolute path on the server to deploy into (e.g. `/var/www/cute-mario`) |
+| `DEPLOY_PATH` | Absolute path on the server to deploy into (e.g. `/srv/www/p18`) |
 
 Once the secrets are set, every push to the tracked branch (or a manual run from
-the **Actions** tab) rsyncs the repo contents to `DEPLOY_PATH` on the server.
+the **Actions** tab) copies the repo contents into `DEPLOY_PATH` on the server.
 Point your web server (Nginx/Apache) at that path to serve `index.html`.
 
-> ⚠️ The workflow uses `rsync --delete`, which removes files in `DEPLOY_PATH`
-> that no longer exist in the repo. Use a dedicated directory for this
-> deployment, not one shared with other content.
+> 🔐 Storing a password is less secure than an SSH key. Prefer switching
+> `SSH_USER` to key-based auth when convenient, and rotate `SSH_PASSWORD`
+> immediately if it was ever shared outside of GitHub's encrypted secrets
+> (e.g. pasted in a chat, email, or ticket).

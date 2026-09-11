@@ -200,6 +200,68 @@
 
   function randRange(a, b){ return a + Math.random() * (b - a); }
 
+  // --- Jump-reachability model ----------------------------------
+  // The level generator needs to know exactly how high and how far the
+  // player's jump can actually carry them, so every platform (and every
+  // coin) it places is guaranteed reachable with a single jump or a
+  // well-timed double jump — never a blind, impossible leap.
+  //
+  // simulateJumpProfile() replays the same per-frame gravity/velocity
+  // math as update() (jump, then gravity, then move — same order, same
+  // dt=1 step) for a full jump held at max height, optionally re-firing
+  // the second jump the instant the first one reaches its apex (the
+  // timing that yields the most extra height). The result is an array
+  // of "rise above the takeoff point" per frame, which is enough to
+  // answer "how many frames until a platform `rise` pixels up/down is
+  // reachable" for any jump.
+  function simulateJumpProfile(useDoubleJump){
+    let vy = JUMP_VELOCITY;
+    let rise = 0;
+    let usedSecond = false;
+    const heights = [0];
+    for(let t=1; t<600; t++){
+      if(useDoubleJump && !usedSecond && vy >= 0){
+        vy = JUMP_VELOCITY; // re-fire right at the apex of the first jump
+        usedSecond = true;
+      }
+      vy += GRAVITY;
+      vy = Math.min(vy, MAX_FALL_SPEED);
+      rise += -vy;
+      heights.push(rise);
+    }
+    return heights;
+  }
+  const SINGLE_JUMP_PROFILE = simulateJumpProfile(false);
+  const DOUBLE_JUMP_PROFILE = simulateJumpProfile(true);
+  const SINGLE_JUMP_PEAK_T  = SINGLE_JUMP_PROFILE.indexOf(Math.max(...SINGLE_JUMP_PROFILE));
+  const DOUBLE_JUMP_PEAK_T  = DOUBLE_JUMP_PROFILE.indexOf(Math.max(...DOUBLE_JUMP_PROFILE));
+  const SINGLE_JUMP_RISE    = SINGLE_JUMP_PROFILE[SINGLE_JUMP_PEAK_T];
+  const DOUBLE_JUMP_RISE    = DOUBLE_JUMP_PROFILE[DOUBLE_JUMP_PEAK_T];
+
+  const REACH_SAFETY_HEIGHT = 0.8;  // stay under the theoretical max rise
+  const REACH_SAFETY_DX     = 0.72; // stay under the theoretical max distance
+  const MAX_SAFE_RISE = DOUBLE_JUMP_RISE * REACH_SAFETY_HEIGHT;
+
+  // First frame (at or after the profile's peak — landings only happen
+  // while falling) at which the jump has sunk to `targetRise` or lower.
+  function framesToDescendTo(profile, peakT, targetRise){
+    for(let t=peakT; t<profile.length; t++){
+      if(profile[t] <= targetRise) return t;
+    }
+    return profile.length - 1;
+  }
+
+  // Max horizontal distance coverable while climbing/falling to a
+  // platform `rise` pixels above (positive) or below (negative) the
+  // takeoff point — the level generator's gap budget for that rise.
+  function reachDx(rise){
+    const useDouble = rise > SINGLE_JUMP_RISE;
+    const profile = useDouble ? DOUBLE_JUMP_PROFILE : SINGLE_JUMP_PROFILE;
+    const peakT    = useDouble ? DOUBLE_JUMP_PEAK_T  : SINGLE_JUMP_PEAK_T;
+    const t = framesToDescendTo(profile, peakT, rise);
+    return t * RUN_MAX_SPEED * REACH_SAFETY_DX;
+  }
+
 
   // ---------------------------------------------------------------
   // 2. LEVEL MANAGER — 10 progressively harder stages
@@ -214,27 +276,75 @@
     { color:'#b7f0a8', top:'#d8f8ce' },
   ];
 
+  // One cute, distinct look per stage — sky gradient, hill color, an
+  // optional ground re-tint, and a decoration type rendered by
+  // drawSkyMotes()/drawGroundProps()/drawRainbowArc()/drawMoon().
+  const STAGE_THEMES = [
+    { name:'Meadow Morning',  sky:['#7ec8ff','#bfe8ff','#eaf9ff'], hill:'#9be89b', decor:'butterflies' },
+    { name:'Cotton-Candy Sky',sky:['#ffb3d9','#ffe0f0','#fff5fb'], hill:'#c9a8e0', decor:'bigClouds' },
+    { name:'Rainbow Valley',  sky:['#8ecbff','#cbe8ff','#f2fbff'], hill:'#9be89b', decor:'rainbow' },
+    { name:'Golden Dunes',    sky:['#ffd08a','#ffe6b8','#fff6e0'], hill:'#e8c98a', decor:'cactus',
+      groundTop:'#e8c15e', groundBody:'#c99a4e', groundEdge:'#f2d98a' },
+    { name:'Enchanted Forest',sky:['#5fb0a8','#a7d9c9','#e8f7ee'], hill:'#4f8f5c', decor:'fireflies' },
+    { name:'Sunset Beach',    sky:['#ff9d7a','#ffc7a0','#fff0dc'], hill:'#7ecbb8', decor:'palms' },
+    { name:'Starry Night',    sky:['#232357','#3d4080','#6d72b8'], hill:'#33355c', decor:'stars', dark:true,
+      groundTop:'#5fae6a', groundBody:'#9a7a52', groundEdge:'#6fc27a' },
+    { name:'Bubble Kingdom',  sky:['#7fd8e8','#bdeef2','#eafbfc'], hill:'#7fc9b8', decor:'bubbles' },
+    { name:'Candy Kingdom',   sky:['#ff9ecb','#ffd3ea','#fff2f8'], hill:'#d99ad9', decor:'candy' },
+    { name:'Rainbow Summit',  sky:['#ffb84c','#ffe08a','#eafcff'], hill:'#9be89b', decor:'confetti' },
+  ];
+
   // Builds one stage's layout. Difficulty (level length, gap size,
   // platform count, and hazard count) scales up with stageNum (1..10).
   function generateStage(stageNum){
     const levelWidth = 1700 + stageNum * 260;
+    const theme = STAGE_THEMES[(stageNum - 1) % STAGE_THEMES.length];
 
-    // --- Floating candy-colored platforms, staircased across the level ---
+    // --- Floating candy-colored platforms, forming a staircase whose
+    //     every step is physically reachable: each platform's rise from
+    //     the previous one (or the ground, for the first) — and the gap
+    //     that goes with that rise — are bounded by reachDx(), so a
+    //     single jump or a well-timed double jump always gets there. ---
     const platformCount = 8 + stageNum;
-    const minGap = 150 + stageNum * 8;   // gaps widen as stages progress
-    const maxGap = 210 + stageNum * 12;
+    const maxRiseUp = Math.min(MAX_SAFE_RISE, 70 + stageNum * 6); // taller reaches unlock at later stages
     const platforms = [];
-    let x = 280;
+    let prevRight = 280; // takeoff cursor: right edge of the previous platform (or the spawn runway)
+    let prevY     = GROUND_Y; // the player starts grounded, so the first hop is measured from here
     for(let i=0; i<platformCount; i++){
       const w = Math.max(70, randRange(90, 150) - stageNum * 3);
-      const y = GROUND_Y - randRange(90, 240 + stageNum * 6);
+
+      // Wander the staircase up and down rather than only climbing, so
+      // both single- and double-jump timing get used across a stage.
+      const rise = randRange(-150, maxRiseUp);
+      let platY = prevY - rise;
+      // Clamp to stay on-screen AND leave room for the player to walk
+      // underneath on the ground path — anything closer to the ground
+      // than player.h plus a margin would wall off that path entirely.
+      platY = Math.min(GROUND_Y - 90, Math.max(70, platY));
+      const actualRise = prevY - platY; // this platform's rise from the takeoff point, post-clamp
+
+      // The gap FROM the takeoff point TO this platform must itself be
+      // bounded by that same rise — not by whatever rise produced the
+      // *previous* gap — or a tall step could get paired with a gap only
+      // a flat one could cover.
+      const maxGap = Math.max(40, reachDx(actualRise)); // floor keeps a tiny gap even at extreme rises
+      const desiredMinGap = 90 + stageNum * 5; // grows with difficulty, but never past what's reachable
+      const minGap = Math.min(desiredMinGap, maxGap * 0.55);
+      const gap = randRange(minGap, maxGap); // maxGap is already the hard reachability ceiling
+
+      const platX = prevRight + gap;
       const palette = PLATFORM_PALETTE[i % PLATFORM_PALETTE.length];
-      platforms.push({ x, y, w, h:28, color:palette.color, top:palette.top });
-      x += w + randRange(minGap, maxGap);
-      if(x > levelWidth - 320) break;
+      platforms.push({ x:platX, y:platY, w, h:28, color:palette.color, top:palette.top });
+
+      prevY = platY;
+      prevRight = platX + w;
+      if(prevRight > levelWidth - 320) break;
     }
 
-    // --- Collectible stars: one above most platforms, plus a few extra ---
+    // --- Collectible stars: one above most platforms (trivially in
+    //     reach once you're standing on it), plus a few extra ones that
+    //     float low enough above the ground to grab with a single jump
+    //     — no coin is ever placed out of reach. ---
     const coins = [];
     platforms.forEach(p => {
       if(Math.random() < 0.8){
@@ -243,8 +353,9 @@
     });
     const extraCoins = 3 + Math.floor(stageNum / 2);
     for(let i=0; i<extraCoins; i++){
+      const riseAbove = randRange(40, SINGLE_JUMP_RISE * 0.75); // always a single-jump grab from the ground
       coins.push({
-        x:randRange(400, levelWidth - 400), y:GROUND_Y - randRange(80, 300),
+        x:randRange(400, levelWidth - 400), y:GROUND_Y - riseAbove,
         r:11, collected:false, bob:Math.random()*Math.PI*2,
       });
     }
@@ -258,7 +369,7 @@
 
     const flagX = levelWidth - 120;
 
-    return { levelWidth, platforms, coins, hazards, flagX };
+    return { levelWidth, platforms, coins, hazards, flagX, theme };
   }
 
   // Generate all 10 stages once up front, so replaying a stage after a
@@ -269,24 +380,56 @@
 
   // --- Mutable "current stage" state, populated by loadStage() below ---
   let currentStageIndex = 0;   // 0-based
-  let stage       = null;      // current stage's { levelWidth, platforms, coins, hazards, flagX }
+  let stage       = null;      // current stage's { levelWidth, platforms, coins, hazards, flagX, theme }
   let ground      = null;
   let solids      = [];
   let LEVEL_WIDTH = 0;
   let FLAG_X      = 0;
+  let currentTheme = STAGE_THEMES[0]; // this stage's cute visual theme (see STAGE_THEMES)
 
   // Decorative parallax elements (purely visual, no collision) — regenerated
-  // per stage since each stage has a different level width.
-  let cloudSpots = [];
-  let dirtDots   = [];
+  // per stage since each stage has a different level width and theme.
+  let cloudSpots  = [];
+  let dirtDots    = [];
+  let groundProps = []; // theme props anchored to the level (cactus/palm/candy)
+  let skyMotes    = []; // ambient screen-space motes (stars/fireflies/bubbles/confetti/butterflies)
   function generateDecor(levelWidth){
+    const bigClouds = currentTheme.decor === 'bigClouds';
     cloudSpots = [];
-    for(let i=0; i<16; i++){
-      cloudSpots.push({ x:randRange(0,levelWidth), y:randRange(40,150), s:randRange(0.7,1.3) });
+    for(let i=0; i<(bigClouds ? 22 : 16); i++){
+      cloudSpots.push({
+        x:randRange(0,levelWidth), y:randRange(40,150),
+        s:bigClouds ? randRange(1.1,1.8) : randRange(0.7,1.3),
+      });
     }
     dirtDots = [];
     for(let i=0; i<260; i++){
       dirtDots.push({ x:randRange(0,levelWidth), y:randRange(GROUND_Y+30,H+20), r:randRange(2,5) });
+    }
+
+    groundProps = [];
+    if(['cactus','palm','candy'].includes(currentTheme.decor)){
+      const count = 5 + Math.floor(levelWidth / 700);
+      const candyColors = ['#ff6b9e','#6ec8ff','#ffd93d'];
+      for(let i=0; i<count; i++){
+        groundProps.push({
+          x:randRange(250, levelWidth-250), scale:randRange(0.8,1.3),
+          color:candyColors[Math.floor(Math.random()*candyColors.length)],
+        });
+      }
+    }
+
+    skyMotes = [];
+    if(['stars','fireflies','bubbles','confetti','butterflies'].includes(currentTheme.decor)){
+      const count = currentTheme.decor === 'stars' ? 22 : 12;
+      const moteColors = ['#ff9ecb','#9ecbff','#ffe39e','#b7f0a8'];
+      for(let i=0; i<count; i++){
+        skyMotes.push({
+          nx:Math.random(), ny:randRange(0.05, currentTheme.decor === 'fireflies' ? 0.62 : 0.55),
+          phase:Math.random()*Math.PI*2, size:randRange(3,7),
+          color:moteColors[Math.floor(Math.random()*moteColors.length)],
+        });
+      }
     }
   }
 
@@ -296,6 +439,7 @@
   function loadStage(index){
     currentStageIndex = index;
     stage = STAGES[index];
+    currentTheme = stage.theme;
     LEVEL_WIDTH = stage.levelWidth;
     FLAG_X = stage.flagX;
     ground = { x:0, y:GROUND_Y, w:LEVEL_WIDTH, h:(H-GROUND_Y)+60 };
@@ -522,6 +666,9 @@
         score++;
         document.getElementById('score').textContent = score;
         playSfx('coin', 0.8, () => playTone(880, 0.1, 'triangle', 0.06));
+        if(stage.coins.every(cc => cc.collected)){
+          showStageBanner('⭐ All stars collected — find the flag!');
+        }
       }
     }
   }
@@ -543,11 +690,22 @@
   function checkWin(){
     if(won || player.x + player.w < FLAG_X) return;
 
+    // The flag only lets you through once every star in the stage is
+    // collected — reaching it early just nudges the player back to go
+    // finish collecting (throttled so it doesn't retrigger every frame).
+    if(!stage.coins.every(c => c.collected)){
+      if(stageBannerTimer <= 0){
+        showStageBanner('⭐ Collect all the stars first!');
+        playTone(392, 0.12, 'sine', 0.05);
+      }
+      return;
+    }
+
     if(currentStageIndex < TOTAL_STAGES - 1){
       // Stage clear — load the next stage's layout and keep playing.
       playSfx('stageClear', 0.8, () => playTone(659, 0.1, 'triangle', 0.07));
       loadStage(currentStageIndex + 1);
-      showStageBanner(`Stage ${currentStageIndex + 1}!`);
+      showStageBanner(`Stage ${currentStageIndex + 1} — ${stage.theme.name}!`);
     } else {
       // Final stage complete — show the win screen.
       won = true;
@@ -674,20 +832,133 @@
 
   function drawSky(){
     const grad = ctx.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0,   '#7ec8ff'); // bright sky blue
-    grad.addColorStop(0.7, '#bfe8ff');
-    grad.addColorStop(1,   '#eaf9ff');
+    const [skyTop, skyMid, skyBottom] = currentTheme.sky;
+    grad.addColorStop(0,   skyTop);
+    grad.addColorStop(0.7, skyMid);
+    grad.addColorStop(1,   skyBottom);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, W, H);
 
-    // A cheerful sun in the corner.
+    // A cheerful sun in the corner — swapped for a moon on night themes.
+    if(!currentTheme.dark){
+      ctx.save();
+      ctx.translate(W - 90, 80);
+      ctx.fillStyle = '#fff3b0';
+      ctx.beginPath(); ctx.arc(0, 0, 40, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#ffe066';
+      ctx.beginPath(); ctx.arc(0, 0, 30, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // A crescent moon (for night themes), carved out of a pale disc using
+  // the sky's own top color so the "bite" blends seamlessly.
+  function drawMoon(){
     ctx.save();
     ctx.translate(W - 90, 80);
-    ctx.fillStyle = '#fff3b0';
-    ctx.beginPath(); ctx.arc(0, 0, 40, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#ffe066';
-    ctx.beginPath(); ctx.arc(0, 0, 30, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#fdf6d8';
+    ctx.beginPath(); ctx.arc(0, 0, 34, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = currentTheme.sky[0];
+    ctx.beginPath(); ctx.arc(14, -8, 30, 0, Math.PI*2); ctx.fill();
     ctx.restore();
+  }
+
+  // A soft rainbow arch, peeking over the horizon (Rainbow Valley / Summit).
+  function drawRainbowArc(){
+    const cx = W * 0.24, cy = H * 0.62;
+    const bands = ['#ff6b6b','#ffb84c','#ffe066','#8fe86a','#6ec8ff','#b78bfa'];
+    ctx.save();
+    ctx.lineCap = 'round';
+    bands.forEach((col, i) => {
+      ctx.beginPath();
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 14;
+      ctx.arc(cx, cy, 90 + i * 15, Math.PI, Math.PI * 2);
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  // Ambient screen-space decoration, one look per theme: twinkling
+  // stars, glowing fireflies, drifting bubbles, falling confetti, or
+  // flapping butterflies. Purely atmospheric — no gameplay effect.
+  function drawSkyMotes(t){
+    if(!skyMotes.length) return;
+    const decor = currentTheme.decor;
+    for(const m of skyMotes){
+      const px = m.nx * W;
+      const py = m.ny * H + Math.sin(t/900 + m.phase) * 10;
+      ctx.save();
+      ctx.translate(px, py);
+      if(decor === 'stars'){
+        const twinkle = 0.5 + 0.5 * Math.sin(t/400 + m.phase*3);
+        ctx.globalAlpha = 0.35 + twinkle*0.65;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(0, 0, m.size*0.55, 0, Math.PI*2); ctx.fill();
+      } else if(decor === 'fireflies'){
+        const glow = 0.5 + 0.5 * Math.sin(t/300 + m.phase*2);
+        ctx.globalAlpha = 0.25 * glow;
+        ctx.fillStyle = '#fff6b0';
+        ctx.beginPath(); ctx.arc(0, 0, m.size*1.8, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = 0.5 + glow*0.5;
+        ctx.beginPath(); ctx.arc(0, 0, m.size*0.55, 0, Math.PI*2); ctx.fill();
+      } else if(decor === 'bubbles'){
+        ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, m.size, 0, Math.PI*2); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.22)';
+        ctx.fill();
+      } else if(decor === 'confetti'){
+        ctx.rotate(t/300 + m.phase);
+        ctx.fillStyle = m.color;
+        ctx.fillRect(-m.size/2, -m.size/2, m.size, m.size);
+      } else if(decor === 'butterflies'){
+        const flap = Math.sin(t/120 + m.phase*5) * 0.5 + 0.5;
+        ctx.fillStyle = m.color;
+        ctx.beginPath(); ctx.ellipse(-m.size*0.5, 0, m.size*0.5*flap + 2, m.size*0.7, 0, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse( m.size*0.5, 0, m.size*0.5*flap + 2, m.size*0.7, 0, 0, Math.PI*2); ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  // Ground-anchored theme props (cactus/palm/candy) — scroll with the
+  // level like platforms, drawn in level-space just above the ground.
+  function drawGroundProps(){
+    const decor = currentTheme.decor;
+    if(!['cactus','palm','candy'].includes(decor)) return;
+    for(const p of groundProps){
+      ctx.save();
+      ctx.translate(p.x, GROUND_Y);
+      ctx.scale(p.scale, p.scale);
+      if(decor === 'cactus'){
+        ctx.fillStyle = '#6fae5a';
+        roundRect(-10, -70, 20, 70, 10); ctx.fill();
+        roundRect(-26, -50, 16, 30, 8); ctx.fill();
+        roundRect(10, -58, 16, 34, 8); ctx.fill();
+        ctx.fillStyle = '#ff9ecb';
+        ctx.beginPath(); ctx.arc(0, -70, 4, 0, Math.PI*2); ctx.fill();
+      } else if(decor === 'palm'){
+        ctx.strokeStyle = '#a9743f'; ctx.lineWidth = 8; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.quadraticCurveTo(6, -50, 0, -90); ctx.stroke();
+        ctx.fillStyle = '#7ed957';
+        for(let a=0; a<5; a++){
+          ctx.save();
+          ctx.translate(0, -90);
+          ctx.rotate(a * (Math.PI*2/5));
+          ctx.beginPath(); ctx.ellipse(18, 0, 22, 8, 0, 0, Math.PI*2); ctx.fill();
+          ctx.restore();
+        }
+      } else if(decor === 'candy'){
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -60); ctx.stroke();
+        ctx.fillStyle = p.color;
+        ctx.beginPath(); ctx.arc(0, -72, 16, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(0, -72, 10, 0.4*Math.PI, 1.4*Math.PI); ctx.stroke();
+      }
+      ctx.restore();
+    }
   }
 
   function drawClouds(){
@@ -709,7 +980,7 @@
   }
 
   function drawHills(){
-    ctx.fillStyle = '#9be89b';
+    ctx.fillStyle = currentTheme.hill;
     const parallax = 0.6;
     for(let i=0; i < Math.ceil(LEVEL_WIDTH/400)+1; i++){
       const hx = i*400 - cameraX*parallax;
@@ -722,13 +993,13 @@
 
   function drawGround(){
     // Dirt body.
-    ctx.fillStyle = '#c68a4e';
+    ctx.fillStyle = currentTheme.groundBody || '#c68a4e';
     ctx.fillRect(0, GROUND_Y, LEVEL_WIDTH, (H-GROUND_Y)+60);
-    // Bright green grass strip on top.
-    ctx.fillStyle = '#7ed957';
+    // Bright grass strip on top.
+    ctx.fillStyle = currentTheme.groundTop || '#7ed957';
     ctx.fillRect(0, GROUND_Y, LEVEL_WIDTH, 26);
-    // Scalloped grass edge for a soft, cute silhouette.
-    ctx.fillStyle = '#8fe86a';
+    // Scalloped edge for a soft, cute silhouette.
+    ctx.fillStyle = currentTheme.groundEdge || '#8fe86a';
     for(let x=0; x<LEVEL_WIDTH; x+=36){
       ctx.beginPath();
       ctx.arc(x+18, GROUND_Y+2, 18, Math.PI, 0);
@@ -902,6 +1173,9 @@
 
   function render(t){
     drawSky();
+    if(currentTheme.dark) drawMoon();
+    if(currentTheme.decor === 'rainbow') drawRainbowArc();
+    drawSkyMotes(t);
     drawClouds();
     drawHills();
 
@@ -909,6 +1183,7 @@
     ctx.save();
     ctx.translate(-cameraX, 0);
     drawGround();
+    drawGroundProps();
     drawPlatforms();
     drawHazards();
     drawCoins(t);

@@ -74,7 +74,55 @@
     backdrop-filter: blur(2px);
   }
   .overlay.hidden{ display:none; }
+
+  /* The start screen swaps the dark blurred tint for its own cute,
+     static sky/hills/clouds illustration so it feels like a warm
+     "cover art" for the game instead of a modal dimming it. */
+  #start-screen{
+    background:none;
+    backdrop-filter:none;
+    overflow:hidden;
+  }
+  .start-scenery{
+    position:absolute; inset:0; z-index:0;
+    background:linear-gradient(180deg,#7ec8ff 0%, #bfe8ff 55%, #eaf9ff 100%);
+  }
+  .scenery-sun{
+    position:absolute; top:9%; right:11%;
+    width:64px; height:64px; border-radius:50%;
+    background:radial-gradient(circle at 35% 35%, #fff3b0, #ffe066);
+    box-shadow:0 0 30px 10px rgba(255,224,102,0.55);
+  }
+  .scenery-cloud{
+    position:absolute; background:#fff; border-radius:40px; opacity:0.95;
+  }
+  .scenery-cloud::before, .scenery-cloud::after{
+    content:''; position:absolute; background:#fff; border-radius:50%;
+  }
+  .cloud-a{ width:90px; height:32px; top:16%; left:6%; }
+  .cloud-a::before{ width:46px; height:46px; top:-24px; left:6px; }
+  .cloud-a::after{ width:34px; height:34px; top:-16px; right:8px; }
+  .cloud-b{ width:70px; height:26px; top:30%; right:20%; transform:scale(0.85); }
+  .cloud-b::before{ width:36px; height:36px; top:-18px; left:6px; }
+  .cloud-b::after{ width:26px; height:26px; top:-12px; right:6px; }
+  .cloud-c{ width:76px; height:28px; top:10%; left:38%; transform:scale(0.7); }
+  .cloud-c::before{ width:40px; height:40px; top:-20px; left:6px; }
+  .cloud-c::after{ width:30px; height:30px; top:-14px; right:6px; }
+  .scenery-hill{ position:absolute; bottom:64px; border-radius:50%; }
+  .hill-a{ left:-70px; width:340px; height:170px; background:#9be89b; }
+  .hill-b{ right:-90px; bottom:44px; width:300px; height:150px; background:#8fe86a; }
+  .scenery-grass{
+    position:absolute; left:0; right:0; bottom:0; height:64px;
+    background:#7ed957;
+  }
+  .scenery-grass::before{
+    content:''; position:absolute; top:-13px; left:0; right:0; height:20px;
+    background-image:radial-gradient(circle at 18px 0, transparent 18px, #7ed957 19px);
+    background-size:36px 20px; background-repeat:repeat-x;
+  }
+
   .panel{
+    position:relative; z-index:1;
     background:#fff; border-radius:24px; padding:32px 40px;
     text-align:center; max-width:80%;
     box-shadow:0 20px 40px rgba(0,0,0,0.25);
@@ -111,15 +159,26 @@
     </div>
     <div id="hint">⬅️➡️ walk · hold <b>Shift</b> to run · <b>Space</b>/⬆️ to jump (x2!) · avoid the 🔺 spikes</div>
 
-    <!-- Start screen -->
+    <!-- Start screen: a cute static sky/hills/clouds illustration behind
+         a single "Let's Go!" button, rather than the game view dimmed
+         under a dark blurred tint. -->
     <div id="start-screen" class="overlay">
+      <div class="start-scenery" aria-hidden="true">
+        <div class="scenery-sun"></div>
+        <div class="scenery-cloud cloud-a"></div>
+        <div class="scenery-cloud cloud-b"></div>
+        <div class="scenery-cloud cloud-c"></div>
+        <div class="scenery-hill hill-a"></div>
+        <div class="scenery-hill hill-b"></div>
+        <div class="scenery-grass"></div>
+      </div>
       <div class="panel">
         <h1>🌟 Blip's Big Adventure 🌟</h1>
-        <p class="sub">Double-jump across 10 stages, dodge the spikes, and reach every flag!</p>
+        <p class="sub">Help the little cloud-blob reach the flag!</p>
         <div class="controls">
           <div class="ctrl-row"><span class="key">⬅️ ➡️</span> Walk</div>
           <div class="ctrl-row"><span class="key">Shift</span> + ⬅️➡️ Run</div>
-          <div class="ctrl-row"><span class="key">Space / ⬆️</span> Jump (press again mid-air to double-jump)</div>
+          <div class="ctrl-row"><span class="key">Space / ⬆️</span> Jump</div>
         </div>
         <button id="start-btn">Let's Go! ▶️</button>
       </div>

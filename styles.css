@@ -31,6 +31,7 @@ html, body{
 #game-wrap{
   position:relative;
   width:95vw; max-width:960px;
+  max-height:94vh; /* keeps the frame from overflowing short/landscape viewports (phones on their side) */
   aspect-ratio: 960 / 540;
   border-radius:28px;
   overflow:hidden;
@@ -103,7 +104,7 @@ canvas{
   box-shadow:0 20px 40px rgba(0,0,0,0.25);
 }
 .panel h1{ margin:0 0 6px; font-size:clamp(18px,5.2vw,26px); }
-.panel .sub{ margin:0 0 18px; color:#8a7a75; font-size:clamp(12px,3.2vw,14.5px); }
+.panel .sub{ margin:0 0 18px; color:#6b5a52; font-size:clamp(12px,3.2vw,14.5px); }
 .controls{ display:flex; flex-direction:column; gap:8px; margin-bottom:22px; }
 .ctrl-row{ font-size:clamp(11.5px,3vw,14px); display:flex; align-items:center; justify-content:center; gap:8px; flex-wrap:wrap; }
 .key{

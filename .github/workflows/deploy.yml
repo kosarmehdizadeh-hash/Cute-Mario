@@ -1,26 +1,26 @@
 name: Deploy to server
 
-# Gated on CI: this only runs once the "CI" workflow (lint + tests) has
-# completed successfully for a claude/** branch, so a red check never
-# gets auto-deployed. `workflow_dispatch` remains available as a manual
-# override from the Actions tab.
+# Runs on every push to any claude/* branch (covers every future session's
+# branch automatically, without needing to edit this file each time), or
+# manually from the Actions tab. The `ci` job below reuses ci.yml's own
+# lint+test job (via workflow_call) as a required dependency, so `deploy`
+# is skipped whenever lint/tests fail — no red build ever gets shipped.
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
+  push:
     branches:
       - 'claude/**'
   workflow_dispatch:
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: ci
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - name: Copy project files to server via SCP (SSH key auth)
         uses: appleboy/scp-action@v0.1.7

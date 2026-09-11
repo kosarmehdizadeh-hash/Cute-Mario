@@ -102,12 +102,19 @@
   // ---------------------------------------------------------------
   const srAnnouncer = document.getElementById('sr-announcer');
   let announceTimer = null;
-  // Screen-reader status announcements. Debounced slightly so rapid
-  // events (e.g. several coins in one second) don't spam a live region.
+  let announceQueue = [];
+  // Screen-reader status announcements. Batched over a short window so
+  // rapid events (e.g. a coin pickup landing the same frame as a
+  // checkpoint) are all still announced — concatenated into one update —
+  // instead of the later call silently overwriting the earlier message.
   function announce(text){
     if(!srAnnouncer) return;
+    announceQueue.push(text);
     clearTimeout(announceTimer);
-    announceTimer = setTimeout(() => { srAnnouncer.textContent = text; }, 60);
+    announceTimer = setTimeout(() => {
+      srAnnouncer.textContent = announceQueue.join(' ');
+      announceQueue = [];
+    }, 60);
   }
 
   const reducedMotionQuery = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
@@ -355,20 +362,28 @@
   const keys = { left:false, right:false, jumpHeld:false, jumpReq:false, shift:false };
 
   window.addEventListener('keydown', (e) => {
+    // While a dialog is open (start/pause/win screen), Space/Enter on its
+    // focused button is a native button *activation*, not gameplay input —
+    // e.g. pressing Space to click "Resume" must not also register as a
+    // jump the instant control returns to the game. Escape/P still work
+    // (togglePause() itself no-ops when there's nothing to pause/resume).
+    const playable = gameRunning && !paused && !won;
     switch(e.code){
       case 'ArrowLeft':
-        keys.left = true; e.preventDefault(); break;
+        if(playable){ keys.left = true; e.preventDefault(); } break;
       case 'ArrowRight':
-        keys.right = true; e.preventDefault(); break;
+        if(playable){ keys.right = true; e.preventDefault(); } break;
       case 'ArrowUp':
       case 'Space':
-        if(!keys.jumpHeld) keys.jumpReq = true; // only trigger on the initial press
-        keys.jumpHeld = true;
-        e.preventDefault();
+        if(playable){
+          if(!keys.jumpHeld) keys.jumpReq = true; // only trigger on the initial press
+          keys.jumpHeld = true;
+          e.preventDefault();
+        }
         break;
       case 'ShiftLeft':
       case 'ShiftRight':
-        keys.shift = true; break;
+        if(playable) keys.shift = true; break;
       case 'Escape':
         togglePause(); break;
       case 'KeyP':
@@ -1103,13 +1118,29 @@
   let gameRunning = false;
   let paused = false;
 
+  // Collision is discrete (moveX/moveY move the player then test for
+  // overlap), so a single very large dt could in principle move the
+  // player further than a platform/hazard is tall in one step and tunnel
+  // straight through it. MAX_STEP_DT bounds every individual update() call
+  // to a displacement of MAX_FALL_SPEED*MAX_STEP_DT px — safely under the
+  // shortest solid (the 24px-tall hazards) — while still simulating the
+  // full elapsed time (just as several smaller, safe steps instead of one
+  // large risky one), so normal 60fps play (dt≈1) is completely unaffected.
+  const MAX_STEP_DT = 1;
+
   function loop(now){
     if(!lastTime) lastTime = now;
     let dt = (now - lastTime) / (1000/60); // normalize to "frames at 60fps"
     dt = Math.min(dt, 2.5);                // clamp so tab-switch lag doesn't teleport the player
     lastTime = now;
 
-    if(gameRunning && !won && !paused) update(dt);
+    if(gameRunning && !won && !paused){
+      let remaining = dt;
+      while(remaining > 0){
+        update(Math.min(remaining, MAX_STEP_DT));
+        remaining -= MAX_STEP_DT;
+      }
+    }
     render(now);
 
     requestAnimationFrame(loop);
@@ -1225,6 +1256,7 @@
       getState: () => ({
         score, comboStreak, bestComboStreak, checkpointReached,
         currentStageIndex, won, paused,
+        playerVy: player.vy, playerJumps: player.jumps,
       }),
     };
   }

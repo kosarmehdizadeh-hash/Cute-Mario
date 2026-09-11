@@ -48,6 +48,19 @@ test.describe('core gameplay loop', () => {
     expect(errors).toEqual([]);
   });
 
+  test('pressing Space on a focused dialog button activates it, not a gameplay jump', async ({ page }) => {
+    await enableTestHooks(page);
+    await page.goto('index.html');
+    // start-btn is auto-focused on load; Space should click it (native
+    // button activation) rather than *also* registering as a jump the
+    // instant gameplay begins (player.jumps would be spent / vy negative).
+    await page.keyboard.press('Space');
+    await expect(page.locator('#start-screen')).toBeHidden();
+    const state = await page.evaluate(() => window.__BLIP_TEST__.getState());
+    expect(state.playerJumps).toBe(2); // both double-jump charges still unspent
+    expect(state.playerVy).toBe(0);    // not launched upward
+  });
+
   test('pause freezes the game, moves focus to Resume, and resume returns focus to Pause', async ({ page }) => {
     await page.goto('index.html');
     await page.click('#start-btn');

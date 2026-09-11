@@ -1,14 +1,17 @@
 name: CI
 
-# Lints and tests the game on every push/PR so a broken change is caught
-# before it can reach deploy.yml. Doesn't gate deploy.yml itself (that
-# workflow has its own trigger), but a red check here is a clear signal
-# not to merge/deploy.
+# Lints and tests the game on every push/PR. Also exposed as a reusable
+# workflow (workflow_call) so deploy.yml can run these same checks as a
+# required job via `needs:` and skip deploying if they fail — a plain
+# workflow_run trigger would only fire once this file existed on the
+# repo's default branch, which doesn't hold for a claude/** feature
+# branch that deploys directly, so workflow_call is used instead.
 on:
   push:
     branches:
       - '**'
   pull_request:
+  workflow_call:
 
 jobs:
   lint-and-test:

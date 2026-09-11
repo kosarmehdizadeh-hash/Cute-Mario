@@ -1,0 +1,15 @@
+{
+  "name": "blips-big-adventure",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Blip's Big Adventure — a cute HTML5 Canvas platformer. No build step to play; these dev dependencies only support linting and automated tests.",
+  "scripts": {
+    "lint": "eslint game.js",
+    "test": "playwright test",
+    "test:install": "playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "eslint": "^9.13.0"
+  }
+}

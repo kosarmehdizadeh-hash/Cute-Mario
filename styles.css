@@ -1,0 +1,178 @@
+/* ================================================================
+   BLIP'S BIG ADVENTURE — stylesheet
+   Split out of index.html for clearer separation of concerns (still
+   zero-build: plain <link>, no bundler needed).
+   ================================================================ */
+
+/* ---------- GLOBAL / PAGE STYLING ---------- */
+:root{
+  --ink:#4a3f35;
+}
+*{ box-sizing:border-box; }
+html, body{
+  margin:0; padding:0; height:100%;
+  background: linear-gradient(160deg,#fdf6ff 0%, #eafcff 100%);
+  font-family:'Baloo 2','Comic Sans MS','Trebuchet MS',sans-serif;
+  color:var(--ink);
+  display:flex; align-items:center; justify-content:center;
+  min-height:100vh;
+}
+
+/* Visually-hidden but screen-reader-accessible content (game description,
+   live status announcements). Standard "sr-only" clip pattern. */
+.sr-only{
+  position:absolute; width:1px; height:1px;
+  padding:0; margin:-1px; overflow:hidden;
+  clip:rect(0,0,0,0); white-space:nowrap; border:0;
+}
+
+/* The game "frame" — keeps a fixed 960x540 aspect ratio but scales
+   responsively to fit smaller screens. */
+#game-wrap{
+  position:relative;
+  width:95vw; max-width:960px;
+  aspect-ratio: 960 / 540;
+  border-radius:28px;
+  overflow:hidden;
+  touch-action:none; /* the game owns touch input; don't let the page scroll/zoom under a swipe */
+  box-shadow:
+    0 18px 40px rgba(120,90,160,0.25),
+    0 0 0 10px #ffffff,
+    0 0 0 14px #ffd6ec;
+}
+canvas{
+  display:block;
+  width:100%; height:100%;
+  background:#bfe8ff; /* fallback while first frame paints */
+}
+
+/* ---------- HUD (score pill + stage pill + control hint) ---------- */
+#hud{
+  position:absolute; top:14px; left:14px;
+  pointer-events:none;
+  display:flex; flex-direction:column; gap:6px;
+}
+#score-pill{
+  background:#fff; padding:8px 16px; border-radius:999px;
+  font-weight:700; font-size:18px;
+  box-shadow:0 4px 10px rgba(0,0,0,0.12);
+  align-self:flex-start;
+}
+#stage-pill{
+  background:#fff; padding:5px 14px; border-radius:999px;
+  font-weight:700; font-size:13.5px;
+  box-shadow:0 4px 10px rgba(0,0,0,0.12);
+  align-self:flex-start;
+}
+#hint{
+  position:absolute; bottom:12px; left:50%; transform:translateX(-50%);
+  background:rgba(255,255,255,0.85); padding:6px 16px; border-radius:999px;
+  font-size:12px; font-weight:700; white-space:nowrap;
+  pointer-events:none;
+  max-width:92%; overflow:hidden; text-overflow:ellipsis;
+}
+
+/* ---------- Top-right icon buttons: pause + mute ---------- */
+#icon-controls{
+  position:absolute; top:14px; right:14px;
+  display:flex; gap:8px;
+}
+.icon-btn{
+  width:38px; height:38px; padding:0; border-radius:50%;
+  background:#fff; border:none; box-shadow:0 4px 10px rgba(0,0,0,0.12);
+  font-size:18px; line-height:1; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+}
+.icon-btn:hover{ transform:translateY(-1px); }
+.icon-btn:active{ transform:translateY(1px); }
+
+/* ---------- Start / Win / Pause overlays ---------- */
+.overlay{
+  position:absolute; inset:0;
+  background:rgba(60,40,80,0.45);
+  display:flex; align-items:center; justify-content:center;
+  backdrop-filter: blur(2px);
+  padding:16px;
+}
+.overlay.hidden{ display:none; }
+.panel{
+  background:#fff; border-radius:24px;
+  padding:clamp(14px,4vw,32px) clamp(16px,5vw,40px);
+  text-align:center; max-width:min(440px, 92%); max-height:94%;
+  overflow-y:auto; -webkit-overflow-scrolling:touch;
+  box-shadow:0 20px 40px rgba(0,0,0,0.25);
+}
+.panel h1{ margin:0 0 6px; font-size:clamp(18px,5.2vw,26px); }
+.panel .sub{ margin:0 0 18px; color:#8a7a75; font-size:clamp(12px,3.2vw,14.5px); }
+.controls{ display:flex; flex-direction:column; gap:8px; margin-bottom:22px; }
+.ctrl-row{ font-size:clamp(11.5px,3vw,14px); display:flex; align-items:center; justify-content:center; gap:8px; flex-wrap:wrap; }
+.key{
+  background:#f1eafd; border:2px solid #d9c9fb; border-radius:8px;
+  padding:3px 10px; font-weight:700; font-size:13px;
+}
+.start-actions{ display:flex; flex-direction:column; gap:10px; align-items:center; }
+.small-link-btn{
+  background:none; border:none; box-shadow:none; color:#8a7a75;
+  font-size:13px; font-weight:700; text-decoration:underline; padding:4px;
+  cursor:pointer;
+}
+button{
+  background:linear-gradient(180deg,#ffb84c,#ff9a3c);
+  border:none; color:#fff; font-weight:700; font-size:clamp(14px,4vw,16px);
+  padding:12px 28px; border-radius:999px; cursor:pointer;
+  box-shadow:0 6px 0 #d9781f;
+  font-family:inherit;
+  transition:transform 0.08s;
+}
+button:hover{ transform:translateY(-2px); }
+button:active{ transform:translateY(3px); box-shadow:0 2px 0 #d9781f; }
+
+/* Visible keyboard-focus ring for every interactive control (buttons,
+   touch pad) — WCAG 2.4.7. Mouse/touch clicks don't get the ring
+   (:focus-visible), keyboard tabbing does. */
+button:focus-visible,
+.icon-btn:focus-visible,
+.touch-btn:focus-visible{
+  outline:3px solid #4a3f35; outline-offset:3px;
+}
+
+/* ---------- On-screen touch controls (shown for coarse/touch pointers) ---------- */
+#touch-controls{
+  display:none; /* enabled below for touch-primary devices */
+  position:absolute; inset:0; pointer-events:none;
+}
+@media (pointer:coarse){
+  #touch-controls{ display:block; }
+  /* The desktop key-hint bar would otherwise sit under the touch pads;
+     the on-screen buttons (and the start screen's own instructions)
+     already cover the same ground on a touch device. */
+  #hint{ display:none; }
+}
+.touch-pad{
+  position:absolute; bottom:14px; display:flex; gap:10px; pointer-events:auto;
+}
+#touch-move{ left:14px; }
+#touch-actions{ right:14px; align-items:flex-end; }
+.touch-btn{
+  width:56px; height:56px; border-radius:50%;
+  background:rgba(255,255,255,0.75); border:2px solid rgba(74,63,53,0.25);
+  font-size:22px; display:flex; align-items:center; justify-content:center;
+  color:var(--ink); touch-action:none; user-select:none; -webkit-user-select:none;
+  box-shadow:0 4px 10px rgba(0,0,0,0.15);
+}
+.touch-btn:active, .touch-btn.pressed{ background:rgba(255,216,140,0.9); }
+#touch-run{ width:46px; height:46px; font-size:12px; font-weight:800; align-self:flex-end; }
+#touch-jump{ width:66px; height:66px; font-size:26px; }
+
+/* ---------- Reduced motion: calm down non-essential animation ---------- */
+@media (prefers-reduced-motion: reduce){
+  button, .icon-btn, .touch-btn{ transition:none; }
+  button:hover, .icon-btn:hover{ transform:none; }
+}
+
+/* ---------- Small-screen tune-ups ---------- */
+@media (max-width:480px){
+  #hint{ font-size:10.5px; padding:5px 10px; }
+  #score-pill{ font-size:15px; padding:6px 12px; }
+  #stage-pill{ font-size:12px; padding:4px 10px; }
+}

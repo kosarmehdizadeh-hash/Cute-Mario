@@ -25,7 +25,7 @@ jobs:
 
       - name: Generate sound effects via ElevenLabs
         env:
-          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS }}
         run: python3 scripts/generate_sfx.py
 
       - name: Commit and push generated audio

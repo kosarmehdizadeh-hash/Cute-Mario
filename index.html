@@ -97,6 +97,33 @@
   }
   button:hover{ transform:translateY(-2px); }
   button:active{ transform:translateY(3px); box-shadow:0 2px 0 #d9781f; }
+
+  /* ---------- High score leaderboard ---------- */
+  .leaderboard{
+    text-align:left;
+    background:#faf5ff;
+    border-radius:14px;
+    padding:10px 16px;
+    font-size:13px;
+    max-height:150px;
+    overflow-y:auto;
+    margin-bottom:18px;
+  }
+  .leaderboard h2{ margin:0 0 6px; font-size:13.5px; text-align:center; }
+  .leaderboard ol{ margin:0; padding-left:22px; }
+  .leaderboard li{ margin:2px 0; display:flex; justify-content:space-between; gap:14px; }
+  .leaderboard li span:first-child{
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .leaderboard .empty{ list-style:none; text-align:center; color:#8a7a75; margin-left:-22px; }
+  .name-row{ display:flex; gap:8px; justify-content:center; margin-bottom:10px; }
+  .name-row input{
+    font-family:inherit; font-size:14px; padding:8px 12px;
+    border-radius:999px; border:2px solid #d9c9fb; outline:none;
+    width:150px; color:var(--ink);
+  }
+  .name-row input:focus{ border-color:#ffb84c; }
+  .save-status{ font-size:12.5px; min-height:16px; margin:0 0 6px; color:#5a8f5a; font-weight:700; }
 </style>
 </head>
 <body>
@@ -121,6 +148,10 @@
           <div class="ctrl-row"><span class="key">Shift</span> + ⬅️➡️ Run</div>
           <div class="ctrl-row"><span class="key">Space / ⬆️</span> Jump (press again mid-air to double-jump)</div>
         </div>
+        <div class="leaderboard" id="start-leaderboard">
+          <h2>🏆 Top Scores</h2>
+          <ol id="start-leaderboard-list"><li class="empty">Loading…</li></ol>
+        </div>
         <button id="start-btn">Let's Go! ▶️</button>
       </div>
     </div>
@@ -130,11 +161,21 @@
       <div class="panel">
         <h1>🎉 You made it! 🎉</h1>
         <p class="sub" id="win-stats"></p>
+        <div class="name-row">
+          <input id="player-name" type="text" maxlength="20" placeholder="Your name" autocomplete="off">
+          <button id="save-score-btn">Save Score 💾</button>
+        </div>
+        <p class="save-status" id="save-status"></p>
+        <div class="leaderboard" id="win-leaderboard">
+          <h2>🏆 Top Scores</h2>
+          <ol id="win-leaderboard-list"><li class="empty">Loading…</li></ol>
+        </div>
         <button id="restart-btn">Play Again 🔁</button>
       </div>
     </div>
   </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 (() => {
   'use strict';
@@ -153,7 +194,8 @@
        6. Sound (WebAudio beeps)
        7. Particles (explosion effect)
        8. Rendering (background, level, hazards, particles, player)
-       9. Main loop + UI wiring
+       9. High score leaderboard (Supabase)
+      10. Main loop + UI wiring
      ================================================================ */
 
 
@@ -344,6 +386,9 @@
   const keys = { left:false, right:false, jumpHeld:false, jumpReq:false, shift:false };
 
   window.addEventListener('keydown', (e) => {
+    // Let normal typing happen in the name field (spaces, arrow-key cursor
+    // movement, etc.) instead of hijacking it as a game input.
+    if(e.target && e.target.tagName === 'INPUT') return;
     switch(e.code){
       case 'ArrowLeft':
         keys.left = true; e.preventDefault(); break;
@@ -529,6 +574,9 @@
       document.getElementById('win-stats').textContent =
         `You collected ${score} of ${TOTAL_COINS_ALL_STAGES} stars across all ${TOTAL_STAGES} stages!`;
       document.getElementById('win-screen').classList.remove('hidden');
+      document.getElementById('player-name').value = readStoredName();
+      document.getElementById('save-status').textContent = '';
+      refreshLeaderboards();
       playTone(523,0.12,'triangle',0.06);
       setTimeout(() => playTone(659,0.12,'triangle',0.06), 120);
       setTimeout(() => playTone(784,0.18,'triangle',0.06), 240);
@@ -866,7 +914,98 @@
 
 
   // ---------------------------------------------------------------
-  // 9. MAIN LOOP + UI WIRING
+  // 9. HIGH SCORE LEADERBOARD (Supabase)
+  //
+  // The anon/publishable key below is swapped in by the deploy
+  // workflow (see .github/workflows/deploy.yml) from the SUPABASE
+  // GitHub secret — it's never committed to the repo. If it's ever
+  // missing (e.g. running index.html straight from disk), the
+  // leaderboard just quietly disables itself instead of erroring.
+  // ---------------------------------------------------------------
+  const SUPABASE_URL      = 'https://ktniqgpqjbgqcpfjpfke.supabase.co';
+  const SUPABASE_ANON_KEY = '__SUPABASE_ANON_KEY__';
+  const LEADERBOARD_LIMIT = 10;
+  const NAME_STORAGE_KEY  = 'blip-player-name';
+
+  let supabaseClient = null;
+  if(window.supabase && SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.startsWith('__')){
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;',
+    }[c]));
+  }
+
+  async function fetchLeaderboard(){
+    if(!supabaseClient) return null;
+    const { data, error } = await supabaseClient
+      .from('high_scores')
+      .select('name, score')
+      .order('score', { ascending:false })
+      .limit(LEADERBOARD_LIMIT);
+    if(error){ console.error('Leaderboard fetch failed:', error); return null; }
+    return data || [];
+  }
+
+  function renderLeaderboard(listEl, rows){
+    if(rows === null){
+      listEl.innerHTML = '<li class="empty">Leaderboard unavailable</li>';
+    } else if(rows.length === 0){
+      listEl.innerHTML = '<li class="empty">No scores yet — be the first!</li>';
+    } else {
+      listEl.innerHTML = rows.map(r =>
+        `<li><span>${escapeHtml(r.name)}</span><span>${r.score}</span></li>`
+      ).join('');
+    }
+  }
+
+  async function refreshLeaderboards(){
+    const rows = await fetchLeaderboard();
+    renderLeaderboard(document.getElementById('start-leaderboard-list'), rows);
+    renderLeaderboard(document.getElementById('win-leaderboard-list'), rows);
+  }
+
+  function readStoredName(){
+    try{ return localStorage.getItem(NAME_STORAGE_KEY) || ''; }
+    catch(e){ return ''; }
+  }
+  function storeName(name){
+    try{ localStorage.setItem(NAME_STORAGE_KEY, name); }
+    catch(e){ /* private-mode / blocked storage — not critical */ }
+  }
+
+  async function saveScore(){
+    const nameInput = document.getElementById('player-name');
+    const statusEl  = document.getElementById('save-status');
+    const btn       = document.getElementById('save-score-btn');
+    const name = nameInput.value.trim();
+
+    if(!name){ statusEl.textContent = 'Enter a name first!'; return; }
+    if(!supabaseClient){ statusEl.textContent = 'Leaderboard unavailable right now.'; return; }
+
+    btn.disabled = true;
+    statusEl.textContent = 'Saving…';
+    try{
+      const { error } = await supabaseClient.rpc('submit_high_score', {
+        p_name: name, p_score: score,
+      });
+      if(error) throw error;
+      storeName(name);
+      statusEl.textContent = 'Saved! 🎉';
+      await refreshLeaderboards();
+    }catch(e){
+      console.error('Failed to save score:', e);
+      statusEl.textContent = 'Could not save — try again.';
+    }finally{
+      btn.disabled = false;
+    }
+  }
+
+
+  // ---------------------------------------------------------------
+  // 10. MAIN LOOP + UI WIRING
   // ---------------------------------------------------------------
   let lastTime = 0;
   let gameRunning = false;
@@ -886,6 +1025,12 @@
   document.getElementById('score-total').textContent = TOTAL_COINS_ALL_STAGES;
   document.getElementById('stage-total').textContent = TOTAL_STAGES;
   loadStage(0); // set up stage 1 before the first frame renders
+  refreshLeaderboards();
+
+  document.getElementById('save-score-btn').addEventListener('click', saveScore);
+  document.getElementById('player-name').addEventListener('keydown', (e) => {
+    if(e.key === 'Enter') saveScore();
+  });
 
   document.getElementById('start-btn').addEventListener('click', () => {
     document.getElementById('start-screen').classList.add('hidden');

@@ -16,6 +16,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Inject Supabase anon key
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE }}
+        run: |
+          if [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::SUPABASE secret is not set — high scores won't work."
+            exit 1
+          fi
+          sed -i "s|__SUPABASE_ANON_KEY__|$SUPABASE_ANON_KEY|g" index.html
+
       - name: Copy project files to server via SCP (password auth)
         uses: appleboy/scp-action@v0.1.7
         with:

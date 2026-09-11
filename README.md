@@ -33,3 +33,29 @@ Everything lives in a single self-contained `index.html`:
 - **Sound** — short WebAudio-generated beeps for jumps, coin pickups, and winning (no audio files).
 
 See the numbered section comments inside the `<script>` tag in `index.html` for a full code map.
+
+## Deploying to your own server
+
+This repo includes a GitHub Actions workflow (`.github/workflows/deploy.yml`) that
+copies the project files to a server over SCP/SSH on every push, using a
+password login.
+
+To enable it, add these repository secrets under
+**Settings → Secrets and variables → Actions → New repository secret**:
+
+| Secret | Value |
+| --- | --- |
+| `SSH_HOST` | Server IP or domain |
+| `SSH_USER` | SSH username |
+| `SSH_PASSWORD` | SSH password for `SSH_USER` |
+| `SSH_PORT` | SSH port (usually `22`) |
+| `DEPLOY_PATH` | Absolute path on the server to deploy into (e.g. `/srv/www/p18`) |
+
+Once the secrets are set, every push to the tracked branch (or a manual run from
+the **Actions** tab) copies the repo contents into `DEPLOY_PATH` on the server.
+Point your web server (Nginx/Apache) at that path to serve `index.html`.
+
+> 🔐 Storing a password is less secure than an SSH key. Prefer switching
+> `SSH_USER` to key-based auth when convenient, and rotate `SSH_PASSWORD`
+> immediately if it was ever shared outside of GitHub's encrypted secrets
+> (e.g. pasted in a chat, email, or ticket).

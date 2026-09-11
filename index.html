@@ -41,20 +41,28 @@
     background:#bfe8ff; /* fallback while first frame paints */
   }
 
-  /* ---------- HUD (score pill + control hint) ---------- */
+  /* ---------- HUD (score pill + stage pill + control hint) ---------- */
   #hud{
     position:absolute; top:14px; left:14px;
     pointer-events:none;
+    display:flex; flex-direction:column; gap:6px;
   }
   #score-pill{
     background:#fff; padding:8px 16px; border-radius:999px;
     font-weight:700; font-size:18px;
     box-shadow:0 4px 10px rgba(0,0,0,0.12);
+    align-self:flex-start;
+  }
+  #stage-pill{
+    background:#fff; padding:5px 14px; border-radius:999px;
+    font-weight:700; font-size:13.5px;
+    box-shadow:0 4px 10px rgba(0,0,0,0.12);
+    align-self:flex-start;
   }
   #hint{
     position:absolute; bottom:12px; left:50%; transform:translateX(-50%);
     background:rgba(255,255,255,0.85); padding:6px 16px; border-radius:999px;
-    font-size:12.5px; font-weight:700; white-space:nowrap;
+    font-size:12px; font-weight:700; white-space:nowrap;
     pointer-events:none;
   }
 
@@ -96,27 +104,28 @@
   <div id="game-wrap">
     <canvas id="game" width="960" height="540"></canvas>
 
-    <!-- Score HUD -->
+    <!-- Score + stage HUD -->
     <div id="hud">
       <div id="score-pill">⭐ <span id="score">0</span> / <span id="score-total">0</span></div>
+      <div id="stage-pill">🏁 Stage <span id="stage-num">1</span>/<span id="stage-total">10</span></div>
     </div>
-    <div id="hint">⬅️➡️ walk · hold <b>Shift</b> to run · <b>Space</b>/⬆️ to jump</div>
+    <div id="hint">⬅️➡️ walk · hold <b>Shift</b> to run · <b>Space</b>/⬆️ to jump (x2!) · avoid the 🔺 spikes</div>
 
     <!-- Start screen -->
     <div id="start-screen" class="overlay">
       <div class="panel">
         <h1>🌟 Blip's Big Adventure 🌟</h1>
-        <p class="sub">Help the little cloud-blob reach the flag!</p>
+        <p class="sub">Double-jump across 10 stages, dodge the spikes, and reach every flag!</p>
         <div class="controls">
           <div class="ctrl-row"><span class="key">⬅️ ➡️</span> Walk</div>
           <div class="ctrl-row"><span class="key">Shift</span> + ⬅️➡️ Run</div>
-          <div class="ctrl-row"><span class="key">Space / ⬆️</span> Jump</div>
+          <div class="ctrl-row"><span class="key">Space / ⬆️</span> Jump (press again mid-air to double-jump)</div>
         </div>
         <button id="start-btn">Let's Go! ▶️</button>
       </div>
     </div>
 
-    <!-- Win screen -->
+    <!-- Win screen (only shown after the final stage) -->
     <div id="win-screen" class="overlay hidden">
       <div class="panel">
         <h1>🎉 You made it! 🎉</h1>
@@ -136,13 +145,15 @@
 
      Code map:
        1. Canvas & physics constants
-       2. Level data (ground, platforms, coins, flag)
-       3. Player object
+       2. Level manager — 10 procedurally-generated, progressively
+          harder stages (platforms, coins, hazards)
+       3. Player object (incl. double-jump state)
        4. Input handling
-       5. Collision + physics update
+       5. Collision + physics update (incl. hazard collisions)
        6. Sound (WebAudio beeps)
-       7. Rendering (background, level, player)
-       8. Main loop + UI wiring
+       7. Particles (explosion effect)
+       8. Rendering (background, level, hazards, particles, player)
+       9. Main loop + UI wiring
      ================================================================ */
 
 
@@ -164,59 +175,131 @@
   const AIR_FRICTION     = 0.3;    // gentler deceleration mid-air
   const JUMP_VELOCITY    = -13.2;  // initial upward velocity on jump
   const JUMP_CUT_FACTOR  = 0.45;   // releasing jump early shortens the hop
+  const MAX_JUMPS        = 2;      // double jump: one from the ground, one in the air
 
   function randRange(a, b){ return a + Math.random() * (b - a); }
 
 
   // ---------------------------------------------------------------
-  // 2. LEVEL DATA
+  // 2. LEVEL MANAGER — 10 progressively harder stages
   // ---------------------------------------------------------------
-  const GROUND_Y    = H - 90;     // y-coordinate of the top of the ground
-  const LEVEL_WIDTH = 3400;       // total width of the scrolling level
+  const GROUND_Y     = H - 90;     // y-coordinate of the top of the ground
+  const TOTAL_STAGES = 10;
 
-  // Floating candy-colored platforms at varying heights, forming a
-  // loose staircase across the level so the player can test jumping.
-  const platforms = [
-    { x:300,  y:GROUND_Y-110, w:140, h:28, color:'#ff9ecb', top:'#ffc4e0' },
-    { x:560,  y:GROUND_Y-190, w:120, h:28, color:'#9ecbff', top:'#c4e0ff' },
-    { x:760,  y:GROUND_Y-260, w:120, h:28, color:'#ffe39e', top:'#fff0c4' },
-    { x:1020, y:GROUND_Y-150, w:160, h:28, color:'#b7f0a8', top:'#d8f8ce' },
-    { x:1300, y:GROUND_Y-220, w:100, h:28, color:'#ff9ecb', top:'#ffc4e0' },
-    { x:1500, y:GROUND_Y-300, w:100, h:28, color:'#9ecbff', top:'#c4e0ff' },
-    { x:1700, y:GROUND_Y-220, w:100, h:28, color:'#ffe39e', top:'#fff0c4' },
-    { x:1900, y:GROUND_Y-130, w:200, h:28, color:'#b7f0a8', top:'#d8f8ce' },
-    { x:2200, y:GROUND_Y-200, w:120, h:28, color:'#ff9ecb', top:'#ffc4e0' },
-    { x:2420, y:GROUND_Y-280, w:120, h:28, color:'#9ecbff', top:'#c4e0ff' },
-    { x:2650, y:GROUND_Y-190, w:140, h:28, color:'#ffe39e', top:'#fff0c4' },
-    { x:2900, y:GROUND_Y-110, w:160, h:28, color:'#b7f0a8', top:'#d8f8ce' },
+  const PLATFORM_PALETTE = [
+    { color:'#ff9ecb', top:'#ffc4e0' },
+    { color:'#9ecbff', top:'#c4e0ff' },
+    { color:'#ffe39e', top:'#fff0c4' },
+    { color:'#b7f0a8', top:'#d8f8ce' },
   ];
 
-  // The ground is just one big solid rectangle spanning the level.
-  const ground = { x:0, y:GROUND_Y, w:LEVEL_WIDTH, h:(H-GROUND_Y)+60 };
+  // Builds one stage's layout. Difficulty (level length, gap size,
+  // platform count, and hazard count) scales up with stageNum (1..10).
+  function generateStage(stageNum){
+    const levelWidth = 1700 + stageNum * 260;
 
-  // Everything the player can stand on / bump into.
-  const solids = [ground, ...platforms];
+    // --- Floating candy-colored platforms, staircased across the level ---
+    const platformCount = 8 + stageNum;
+    const minGap = 150 + stageNum * 8;   // gaps widen as stages progress
+    const maxGap = 210 + stageNum * 12;
+    const platforms = [];
+    let x = 280;
+    for(let i=0; i<platformCount; i++){
+      const w = Math.max(70, randRange(90, 150) - stageNum * 3);
+      const y = GROUND_Y - randRange(90, 240 + stageNum * 6);
+      const palette = PLATFORM_PALETTE[i % PLATFORM_PALETTE.length];
+      platforms.push({ x, y, w, h:28, color:palette.color, top:palette.top });
+      x += w + randRange(minGap, maxGap);
+      if(x > levelWidth - 320) break;
+    }
 
-  // Collectible stars, sprinkled near the platforms.
-  const coins = [];
-  [
-    [340,GROUND_Y-160],[600,GROUND_Y-240],[800,GROUND_Y-310],
-    [1060,GROUND_Y-200],[1100,GROUND_Y-200],[1340,GROUND_Y-270],
-    [1540,GROUND_Y-350],[1740,GROUND_Y-270],[1960,GROUND_Y-180],
-    [2000,GROUND_Y-180],[2240,GROUND_Y-250],[2460,GROUND_Y-330],
-    [2690,GROUND_Y-240],[2940,GROUND_Y-160],[2980,GROUND_Y-160],
-  ].forEach(([x,y]) => coins.push({ x, y, r:11, collected:false, bob:Math.random()*Math.PI*2 }));
+    // --- Collectible stars: one above most platforms, plus a few extra ---
+    const coins = [];
+    platforms.forEach(p => {
+      if(Math.random() < 0.8){
+        coins.push({ x:p.x + p.w/2, y:p.y - 40, r:11, collected:false, bob:Math.random()*Math.PI*2 });
+      }
+    });
+    const extraCoins = 3 + Math.floor(stageNum / 2);
+    for(let i=0; i<extraCoins; i++){
+      coins.push({
+        x:randRange(400, levelWidth - 400), y:GROUND_Y - randRange(80, 300),
+        r:11, collected:false, bob:Math.random()*Math.PI*2,
+      });
+    }
 
-  const FLAG_X = LEVEL_WIDTH - 120; // goal pole near the end of the level
+    // --- Explosive hazards: none in stage 1, growing count afterwards ---
+    const hazards = [];
+    const hazardCount = Math.max(0, stageNum - 1);
+    for(let i=0; i<hazardCount; i++){
+      hazards.push({ x:randRange(500, levelWidth - 400), y:GROUND_Y - 24, w:34, h:24 });
+    }
 
-  // Decorative parallax elements (purely visual, no collision).
-  const cloudSpots = [];
-  for(let i=0;i<16;i++){
-    cloudSpots.push({ x:randRange(0,LEVEL_WIDTH), y:randRange(40,150), s:randRange(0.7,1.3) });
+    const flagX = levelWidth - 120;
+
+    return { levelWidth, platforms, coins, hazards, flagX };
   }
-  const dirtDots = []; // precomputed so the dirt texture doesn't flicker every frame
-  for(let i=0;i<260;i++){
-    dirtDots.push({ x:randRange(0,LEVEL_WIDTH), y:randRange(GROUND_Y+30,H+20), r:randRange(2,5) });
+
+  // Generate all 10 stages once up front, so replaying a stage after a
+  // hazard death always shows the same layout instead of re-rolling it.
+  const STAGES = [];
+  for(let i = 1; i <= TOTAL_STAGES; i++) STAGES.push(generateStage(i));
+  const TOTAL_COINS_ALL_STAGES = STAGES.reduce((sum, s) => sum + s.coins.length, 0);
+
+  // --- Mutable "current stage" state, populated by loadStage() below ---
+  let currentStageIndex = 0;   // 0-based
+  let stage       = null;      // current stage's { levelWidth, platforms, coins, hazards, flagX }
+  let ground      = null;
+  let solids      = [];
+  let LEVEL_WIDTH = 0;
+  let FLAG_X      = 0;
+
+  // Decorative parallax elements (purely visual, no collision) — regenerated
+  // per stage since each stage has a different level width.
+  let cloudSpots = [];
+  let dirtDots   = [];
+  function generateDecor(levelWidth){
+    cloudSpots = [];
+    for(let i=0; i<16; i++){
+      cloudSpots.push({ x:randRange(0,levelWidth), y:randRange(40,150), s:randRange(0.7,1.3) });
+    }
+    dirtDots = [];
+    for(let i=0; i<260; i++){
+      dirtDots.push({ x:randRange(0,levelWidth), y:randRange(GROUND_Y+30,H+20), r:randRange(2,5) });
+    }
+  }
+
+  // Loads the given stage index: rebuilds solids/decor, resets the player
+  // and camera, and refreshes the HUD. Used both for advancing to the next
+  // stage and (via restartStage()) for replaying the current one.
+  function loadStage(index){
+    currentStageIndex = index;
+    stage = STAGES[index];
+    LEVEL_WIDTH = stage.levelWidth;
+    FLAG_X = stage.flagX;
+    ground = { x:0, y:GROUND_Y, w:LEVEL_WIDTH, h:(H-GROUND_Y)+60 };
+    solids = [ground, ...stage.platforms];
+    generateDecor(LEVEL_WIDTH);
+    particles.length = 0;
+    resetPlayer();
+    cameraX = 0;
+    document.getElementById('stage-num').textContent = currentStageIndex + 1;
+  }
+
+  // Restarts the *current* stage after a hazard explosion. Any coins
+  // collected during this attempt are un-collected and their score is
+  // refunded, so the score always matches what's actually still collected.
+  function restartStage(){
+    const collectedInStage = stage.coins.filter(c => c.collected).length;
+    score = Math.max(0, score - collectedInStage);
+    stage.coins.forEach(c => c.collected = false);
+    document.getElementById('score').textContent = score;
+    // Note: particles are intentionally NOT cleared here — restartStage()
+    // is called right after triggerExplosion(), so the explosion debris
+    // keeps animating at the death spot while the player reappears at
+    // the start of the stage.
+    resetPlayer();
+    cameraX = 0;
   }
 
 
@@ -227,6 +310,7 @@
     x:60, y:0, w:34, h:46,
     vx:0, vy:0,
     grounded:false,
+    jumps:MAX_JUMPS, // remaining jump charges — refilled whenever grounded
     facing:1,        // 1 = facing right, -1 = facing left
     legPhase:0,      // drives the walk/run leg-bob animation
     squashT:0,       // 0..1 landing "squash" bounce timer
@@ -237,13 +321,21 @@
     player.x = 60; player.y = GROUND_Y - player.h;
     player.vx = 0; player.vy = 0;
     player.grounded = false; player.facing = 1;
+    player.jumps = MAX_JUMPS;
     player.legPhase = 0; player.squashT = 0;
   }
-  resetPlayer();
 
   let score = 0;
   let won = false;
   let cameraX = 0;
+
+  // Small non-blocking canvas banner shown when a new stage loads.
+  let stageBannerTimer = 0;
+  let stageBannerText = '';
+  function showStageBanner(text){
+    stageBannerText = text;
+    stageBannerTimer = 90; // ~1.5s at 60fps
+  }
 
 
   // ---------------------------------------------------------------
@@ -323,6 +415,8 @@
         box.y = player.y;
       }
     }
+    // Touching ground always refills the double-jump charges.
+    if(player.grounded) player.jumps = MAX_JUMPS;
   }
 
   function update(dt){
@@ -345,11 +439,13 @@
     }
     player.vx = Math.max(-maxSpeed, Math.min(maxSpeed, player.vx));
 
-    // --- Jumping ---
-    if(keys.jumpReq && player.grounded){
+    // --- Jumping (double jump: allowed on the ground OR once more mid-air) ---
+    if(keys.jumpReq && player.jumps > 0){
       player.vy = JUMP_VELOCITY;
       player.grounded = false;
-      playTone(660, 0.08, 'square', 0.05);
+      player.jumps -= 1;
+      // A slightly higher-pitched tone on the second (air) jump for feedback.
+      playTone(player.jumps === MAX_JUMPS - 1 ? 660 : 880, 0.08, 'square', 0.05);
     }
     keys.jumpReq = false;
 
@@ -378,7 +474,10 @@
     if(player.blinkT > 0) player.blinkT -= dt / 60;
 
     updateCamera(dt);
+    updateParticles(dt);
+    if(stageBannerTimer > 0) stageBannerTimer = Math.max(0, stageBannerTimer - dt);
     checkCoinCollection();
+    checkHazardCollision();
     checkWin();
   }
 
@@ -389,7 +488,7 @@
   }
 
   function checkCoinCollection(){
-    for(const c of coins){
+    for(const c of stage.coins){
       if(c.collected) continue;
       const dx = (player.x + player.w/2) - c.x;
       const dy = (player.y + player.h/2) - c.y;
@@ -402,11 +501,33 @@
     }
   }
 
+  // Explosive spike hazards: any overlap sends the player back to the
+  // start of the current stage with a bang and a burst of particles.
+  function checkHazardCollision(){
+    const box = { x:player.x, y:player.y, w:player.w, h:player.h };
+    for(const hz of stage.hazards){
+      if(aabbOverlap(box, hz)){
+        triggerExplosion(player.x + player.w/2, player.y + player.h/2);
+        playTone(55, 0.45, 'sawtooth', 0.16); // low-frequency "boom"
+        restartStage();
+        return; // player position just reset — nothing more to check this frame
+      }
+    }
+  }
+
   function checkWin(){
-    if(!won && player.x + player.w >= FLAG_X){
+    if(won || player.x + player.w < FLAG_X) return;
+
+    if(currentStageIndex < TOTAL_STAGES - 1){
+      // Stage clear — load the next stage's layout and keep playing.
+      playTone(659, 0.1, 'triangle', 0.07);
+      loadStage(currentStageIndex + 1);
+      showStageBanner(`Stage ${currentStageIndex + 1}!`);
+    } else {
+      // Final stage complete — show the win screen.
       won = true;
       document.getElementById('win-stats').textContent =
-        `You collected ${score} of ${coins.length} stars!`;
+        `You collected ${score} of ${TOTAL_COINS_ALL_STAGES} stars across all ${TOTAL_STAGES} stages!`;
       document.getElementById('win-screen').classList.remove('hidden');
       playTone(523,0.12,'triangle',0.06);
       setTimeout(() => playTone(659,0.12,'triangle',0.06), 120);
@@ -437,7 +558,50 @@
 
 
   // ---------------------------------------------------------------
-  // 7. RENDERING
+  // 7. PARTICLES — explosion effect when a hazard is hit
+  // ---------------------------------------------------------------
+  let particles = [];
+  const EXPLOSION_COLORS = ['#ff6b3b', '#ffb03b', '#fff23b', '#ff3b3b'];
+
+  function triggerExplosion(x, y){
+    for(let i=0; i<28; i++){
+      const angle = Math.random() * Math.PI * 2;
+      const speed = randRange(2, 7);
+      particles.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 2,
+        life: 1,
+        decay: randRange(0.02, 0.045),
+        size: randRange(2, 5),
+        color: EXPLOSION_COLORS[Math.floor(Math.random() * EXPLOSION_COLORS.length)],
+      });
+    }
+  }
+
+  function updateParticles(dt){
+    for(let i = particles.length - 1; i >= 0; i--){
+      const p = particles[i];
+      p.vy += 0.25 * dt; // debris falls under gravity too
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= p.decay * dt;
+      if(p.life <= 0) particles.splice(i, 1);
+    }
+  }
+
+  function drawParticles(){
+    for(const p of particles){
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+
+  // ---------------------------------------------------------------
+  // 8. RENDERING
   // ---------------------------------------------------------------
   function roundRect(x, y, w, h, r){
     ctx.beginPath();
@@ -522,7 +686,7 @@
   }
 
   function drawPlatforms(){
-    for(const p of platforms){
+    for(const p of stage.platforms){
       // soft drop shadow
       ctx.fillStyle = 'rgba(0,0,0,0.08)';
       roundRect(p.x+3, p.y+6, p.w, p.h, 12); ctx.fill();
@@ -539,8 +703,31 @@
     }
   }
 
+  // Explosive hazards, drawn as a row of red spikes over a dark base.
+  function drawHazards(){
+    for(const hz of stage.hazards){
+      const spikeW = 12;
+      const count = Math.max(1, Math.round(hz.w / spikeW));
+      const w = hz.w / count;
+
+      ctx.fillStyle = '#8a1414';
+      ctx.fillRect(hz.x, hz.y + hz.h - 4, hz.w, 4);
+
+      ctx.fillStyle = '#ff3b3b';
+      for(let i=0; i<count; i++){
+        const sx = hz.x + i * w;
+        ctx.beginPath();
+        ctx.moveTo(sx, hz.y + hz.h);
+        ctx.lineTo(sx + w/2, hz.y);
+        ctx.lineTo(sx + w, hz.y + hz.h);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+
   function drawCoins(t){
-    for(const c of coins){
+    for(const c of stage.coins){
       if(c.collected) continue;
       const bobY   = c.y + Math.sin(t/300 + c.bob) * 4;
       const spin   = Math.abs(Math.sin(t/260 + c.bob));
@@ -641,6 +828,22 @@
     ctx.restore();
   }
 
+  // Non-blocking "Stage N!" banner drawn in screen space (not affected by
+  // the camera), independent of the win-screen overlay.
+  function drawStageBanner(){
+    if(stageBannerTimer <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, stageBannerTimer / 30);
+    ctx.font = 'bold 40px "Baloo 2","Trebuchet MS",sans-serif';
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    ctx.strokeText(stageBannerText, W/2, 100);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(stageBannerText, W/2, 100);
+    ctx.restore();
+  }
+
   function render(t){
     drawSky();
     drawClouds();
@@ -651,15 +854,19 @@
     ctx.translate(-cameraX, 0);
     drawGround();
     drawPlatforms();
+    drawHazards();
     drawCoins(t);
     drawFlag();
+    drawParticles();
     drawPlayer();
     ctx.restore();
+
+    drawStageBanner();
   }
 
 
   // ---------------------------------------------------------------
-  // 8. MAIN LOOP + UI WIRING
+  // 9. MAIN LOOP + UI WIRING
   // ---------------------------------------------------------------
   let lastTime = 0;
   let gameRunning = false;
@@ -676,7 +883,9 @@
     requestAnimationFrame(loop);
   }
 
-  document.getElementById('score-total').textContent = coins.length;
+  document.getElementById('score-total').textContent = TOTAL_COINS_ALL_STAGES;
+  document.getElementById('stage-total').textContent = TOTAL_STAGES;
+  loadStage(0); // set up stage 1 before the first frame renders
 
   document.getElementById('start-btn').addEventListener('click', () => {
     document.getElementById('start-screen').classList.add('hidden');
@@ -687,9 +896,9 @@
   });
 
   document.getElementById('restart-btn').addEventListener('click', () => {
-    resetPlayer();
-    score = 0; won = false; cameraX = 0;
-    coins.forEach(c => c.collected = false);
+    score = 0; won = false;
+    STAGES.forEach(s => s.coins.forEach(c => c.collected = false));
+    loadStage(0);
     document.getElementById('score').textContent = '0';
     document.getElementById('win-screen').classList.add('hidden');
     gameRunning = true;

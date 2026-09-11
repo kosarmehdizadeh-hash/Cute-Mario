@@ -160,7 +160,9 @@
 
   /* ================================================================
      BLIP'S BIG ADVENTURE — a tiny cute 2D platformer
-     Built with plain HTML5 Canvas + vanilla JS. No external assets.
+     Built with plain HTML5 Canvas + vanilla JS. All visuals are drawn
+     live (the start-screen art is the only embedded image); the sound
+     effects are the only external files, under assets/sfx/.
 
      Code map:
        1. Canvas & physics constants
@@ -169,7 +171,7 @@
        3. Player object (incl. double-jump state)
        4. Input handling
        5. Collision + physics update (incl. hazard collisions)
-       6. Sound (WebAudio beeps)
+       6. Sound (ElevenLabs SFX, WebAudio beep fallback)
        7. Particles (explosion effect)
        8. Rendering (background, level, hazards, particles, player)
        9. Main loop + UI wiring
@@ -463,8 +465,12 @@
       player.vy = JUMP_VELOCITY;
       player.grounded = false;
       player.jumps -= 1;
-      // A slightly higher-pitched tone on the second (air) jump for feedback.
-      playTone(player.jumps === MAX_JUMPS - 1 ? 660 : 880, 0.08, 'square', 0.05);
+      // A distinct sound on the second (air) jump for feedback.
+      if(player.jumps === MAX_JUMPS - 1){
+        playSfx('jump', 0.7, () => playTone(660, 0.08, 'square', 0.05));
+      } else {
+        playSfx('doubleJump', 0.7, () => playTone(880, 0.08, 'square', 0.05));
+      }
     }
     keys.jumpReq = false;
 
@@ -515,7 +521,7 @@
         c.collected = true;
         score++;
         document.getElementById('score').textContent = score;
-        playTone(880, 0.1, 'triangle', 0.06);
+        playSfx('coin', 0.8, () => playTone(880, 0.1, 'triangle', 0.06));
       }
     }
   }
@@ -527,7 +533,7 @@
     for(const hz of stage.hazards){
       if(aabbOverlap(box, hz)){
         triggerExplosion(player.x + player.w/2, player.y + player.h/2);
-        playTone(55, 0.45, 'sawtooth', 0.16); // low-frequency "boom"
+        playSfx('hazard', 0.8, () => playTone(55, 0.45, 'sawtooth', 0.16)); // "boom"
         restartStage();
         return; // player position just reset — nothing more to check this frame
       }
@@ -539,7 +545,7 @@
 
     if(currentStageIndex < TOTAL_STAGES - 1){
       // Stage clear — load the next stage's layout and keep playing.
-      playTone(659, 0.1, 'triangle', 0.07);
+      playSfx('stageClear', 0.8, () => playTone(659, 0.1, 'triangle', 0.07));
       loadStage(currentStageIndex + 1);
       showStageBanner(`Stage ${currentStageIndex + 1}!`);
     } else {
@@ -548,15 +554,19 @@
       document.getElementById('win-stats').textContent =
         `You collected ${score} of ${TOTAL_COINS_ALL_STAGES} stars across all ${TOTAL_STAGES} stages!`;
       document.getElementById('win-screen').classList.remove('hidden');
-      playTone(523,0.12,'triangle',0.06);
-      setTimeout(() => playTone(659,0.12,'triangle',0.06), 120);
-      setTimeout(() => playTone(784,0.18,'triangle',0.06), 240);
+      playSfx('win', 0.9, () => {
+        playTone(523,0.12,'triangle',0.06);
+        setTimeout(() => playTone(659,0.12,'triangle',0.06), 120);
+        setTimeout(() => playTone(784,0.18,'triangle',0.06), 240);
+      });
     }
   }
 
 
   // ---------------------------------------------------------------
-  // 6. SOUND — tiny WebAudio beeps, no external audio files needed
+  // 6. SOUND — ElevenLabs-generated sound effects (assets/sfx/*.mp3),
+  //    with a tiny synthesized WebAudio beep as a fallback for any
+  //    sound that fails to load or play (offline, blocked, etc.).
   // ---------------------------------------------------------------
   let audioCtx = null;
   function playTone(freq, duration, type, volume){
@@ -573,6 +583,33 @@
       gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
       osc.stop(audioCtx.currentTime + duration + 0.02);
     } catch(e){ /* audio unavailable — fail silently */ }
+  }
+
+  // Pre-created <audio> elements, one per effect. cloneNode() on play lets
+  // the same effect overlap itself (e.g. two coins grabbed in quick
+  // succession) without cutting the first one off.
+  const SFX_SRC = {
+    jump:       'assets/sfx/jump.mp3',
+    doubleJump: 'assets/sfx/double-jump.mp3',
+    coin:       'assets/sfx/coin.mp3',
+    hazard:     'assets/sfx/hazard.mp3',
+    stageClear: 'assets/sfx/stage-clear.mp3',
+    win:        'assets/sfx/win.mp3',
+  };
+  const sfxPool = {};
+  for(const key in SFX_SRC){
+    const a = new Audio(SFX_SRC[key]);
+    a.preload = 'auto';
+    sfxPool[key] = a;
+  }
+  function playSfx(name, volume, fallbackTone){
+    const base = sfxPool[name];
+    try{
+      const node = base.cloneNode(true);
+      node.volume = volume;
+      const p = node.play();
+      if(p && p.catch) p.catch(() => fallbackTone());
+    } catch(e){ fallbackTone(); }
   }
 
 

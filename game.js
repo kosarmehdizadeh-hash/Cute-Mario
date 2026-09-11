@@ -52,7 +52,26 @@
   const MAX_JUMP_DX   = Math.floor(RUN_MAX_SPEED * JUMP_APEX_T * 1.7); // safe horizontal gap (run + 2nd jump margin)
   const MAX_JUMP_RISE = Math.floor(JUMP_APEX_H * 1.4);                 // safe vertical rise (2nd jump margin)
 
-  function randRange(a, b){ return a + Math.random() * (b - a); }
+  function makeRandRange(rng){ return (a, b) => a + rng() * (b - a); }
+  const randRange = makeRandRange(Math.random); // used for runtime-only cosmetic randomness (particles, blink timing, decor)
+
+  // Deterministic PRNG (mulberry32) used ONLY for one-time level generation
+  // below. A fixed seed means every player gets the exact same 10 stages,
+  // every time — which is what makes the level-fairness invariants below
+  // testable, and what makes the persisted best-score/best-time actually
+  // comparable across sessions (a re-randomized layout would make either
+  // meaningless).
+  function mulberry32(seed){
+    return function(){
+      seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const LEVEL_SEED = 0xB11F5EED;
+  const levelRandom = mulberry32(LEVEL_SEED);
+  const genRange = makeRandRange(levelRandom);
 
 
   // ---------------------------------------------------------------
@@ -132,12 +151,12 @@
     let x = 280;
     let prevY = GROUND_Y; // treat the ground as the first "surface" for the rise check
     for(let i=0; i<platformCount; i++){
-      const w = Math.max(70, randRange(90, 150) - stageNum * 3);
-      let y = GROUND_Y - randRange(90, 240 + stageNum * 6);
+      const w = Math.max(70, genRange(90, 150) - stageNum * 3);
+      let y = GROUND_Y - genRange(90, 240 + stageNum * 6);
       if(prevY - y > MAX_JUMP_RISE) y = prevY - MAX_JUMP_RISE; // never an unreachable step up
       const palette = PLATFORM_PALETTE[i % PLATFORM_PALETTE.length];
       platforms.push({ x, y, w, h:28, color:palette.color, top:palette.top });
-      const gap = Math.min(randRange(minGap, maxGap), MAX_JUMP_DX); // never an unreachable gap
+      const gap = Math.min(genRange(minGap, maxGap), MAX_JUMP_DX); // never an unreachable gap
       x += w + gap;
       prevY = y;
       if(x > levelWidth - 320) break;
@@ -146,15 +165,15 @@
     // --- Collectible stars: one above most platforms, plus a few extra ---
     const coins = [];
     platforms.forEach(p => {
-      if(Math.random() < 0.8){
-        coins.push({ x:p.x + p.w/2, y:p.y - 40, r:11, collected:false, bob:Math.random()*Math.PI*2 });
+      if(levelRandom() < 0.8){
+        coins.push({ x:p.x + p.w/2, y:p.y - 40, r:11, collected:false, bob:levelRandom()*Math.PI*2 });
       }
     });
     const extraCoins = 3 + Math.floor(stageNum / 2);
     for(let i=0; i<extraCoins; i++){
       coins.push({
-        x:randRange(400, levelWidth - 400), y:GROUND_Y - randRange(80, 300),
-        r:11, collected:false, bob:Math.random()*Math.PI*2,
+        x:genRange(400, levelWidth - 400), y:GROUND_Y - genRange(80, 300),
+        r:11, collected:false, bob:levelRandom()*Math.PI*2,
       });
     }
 
@@ -166,7 +185,7 @@
     const minHazardGap = 220;
     let lastHazardX = -Infinity;
     for(let i=0; i<hazardCount; i++){
-      let hx = randRange(500, levelWidth - 400);
+      let hx = genRange(500, levelWidth - 400);
       if(hx - lastHazardX < minHazardGap) hx = lastHazardX + minHazardGap;
       if(hx > levelWidth - 400) break; // out of room — fewer hazards beats an unfair cluster
       hazards.push({ x:hx, y:GROUND_Y - 24, w:34, h:24 });
@@ -181,13 +200,13 @@
     const enemyCount = stageNum >= 3 ? 1 + Math.floor((stageNum - 3) / 2) : 0;
     const candidatePlatforms = platforms.filter(p => p.w >= ENEMY_W + 20);
     for(let i=0; i<enemyCount && candidatePlatforms.length; i++){
-      const p = candidatePlatforms[Math.floor(Math.random() * candidatePlatforms.length)];
+      const p = candidatePlatforms[Math.floor(levelRandom() * candidatePlatforms.length)];
       const minX = p.x + 6, maxX = p.x + p.w - 6 - ENEMY_W;
-      const spawnX = randRange(minX, Math.max(minX, maxX));
+      const spawnX = genRange(minX, Math.max(minX, maxX));
       enemies.push({
         minX, maxX: Math.max(minX, maxX), spawnX,
         x:spawnX, y:p.y - ENEMY_H, w:ENEMY_W, h:ENEMY_H,
-        dir: Math.random() < 0.5 ? 1 : -1, speed: randRange(0.9, 1.5), alive:true,
+        dir: levelRandom() < 0.5 ? 1 : -1, speed: genRange(0.9, 1.5), alive:true,
       });
     }
 
@@ -635,6 +654,7 @@
       document.getElementById('win-best').textContent =
         `${isNewBestScore ? '🏆 New best score! ' : ''}Best score: ${save.bestScore} · Best time: ${formatTime(save.bestTime)}`;
       document.getElementById('win-screen').classList.remove('hidden');
+      document.getElementById('restart-btn').focus();
       announce(`You won! ${score} of ${TOTAL_COINS_ALL_STAGES} stars in ${formatTime(elapsed)}.`);
       playTone(523,0.12,'triangle',0.06);
       setTimeout(() => playTone(659,0.12,'triangle',0.06), 120);
@@ -674,14 +694,22 @@
   // A gentle looping pentatonic arpeggio, entirely synthesized — no audio
   // files. musicGain's volume is what mute/unmute actually toggles, so
   // muting mid-note is instant instead of waiting for the note to end.
-  const MUSIC_NOTES = [523, 659, 784, 659, 587, 784, 659, 523];
+  // Four short patterns rotate by stage (rather than one 8-note loop for
+  // all 10 stages) so the music doesn't feel identical start to finish.
+  const MUSIC_PATTERNS = [
+    [523, 659, 784, 659, 587, 784, 659, 523], // stages 1,5,9
+    [587, 698, 880, 698, 659, 880, 698, 587], // stages 2,6,10 — a step higher
+    [659, 784, 988, 784, 698, 988, 784, 659], // stages 3,7
+    [523, 622, 784, 622, 523, 698, 622, 523], // stages 4,8 — minor-ish variant
+  ];
   let musicGain = null;
   let musicNoteIndex = 0;
   let musicTimerId = null;
   function scheduleMusic(){
     if(!gameRunning || won) { musicTimerId = null; return; }
     if(!paused && audioCtx && musicGain){
-      const freq = MUSIC_NOTES[musicNoteIndex % MUSIC_NOTES.length];
+      const pattern = MUSIC_PATTERNS[currentStageIndex % MUSIC_PATTERNS.length];
+      const freq = pattern[musicNoteIndex % pattern.length];
       musicNoteIndex++;
       const osc = audioCtx.createOscillator();
       osc.type = 'triangle';
@@ -1104,7 +1132,31 @@
     document.getElementById('pause-btn').setAttribute('aria-label', paused ? 'Resume game' : 'Pause game');
     announce(paused ? 'Game paused.' : 'Game resumed.');
     if(paused) stopMusic(); else startMusic();
+    // Move focus into/out of the modal, per the standard dialog pattern —
+    // keyboard/screen-reader users get taken straight to the one control
+    // that matters instead of being left on a now-hidden button.
+    if(paused) document.getElementById('resume-btn').focus();
+    else document.getElementById('pause-btn').focus();
   }
+
+  // Minimal focus trap for whichever overlay (.overlay:not(.hidden)) is
+  // currently shown: Tab/Shift+Tab cycles only among its own focusable
+  // controls instead of escaping into the (invisible, behind-the-modal)
+  // rest of the page.
+  function getFocusable(container){
+    return Array.from(container.querySelectorAll('button, a[href], [tabindex]:not([tabindex="-1"])'))
+      .filter(el => !el.disabled && el.getClientRects().length > 0);
+  }
+  document.addEventListener('keydown', (e) => {
+    if(e.key !== 'Tab') return;
+    const activeOverlay = document.querySelector('.overlay:not(.hidden)');
+    if(!activeOverlay) return;
+    const focusable = getFocusable(activeOverlay);
+    if(!focusable.length) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if(e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+    else if(!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+  });
 
   // Auto-pause when the tab/window loses visibility, so stepping away
   // never results in an unfair hazard hit while you weren't looking.
@@ -1122,6 +1174,7 @@
     continueBtn.classList.remove('hidden');
     document.getElementById('continue-stage-num').textContent = save.furthestStage;
   }
+  document.getElementById('start-btn').focus();
 
   function beginRun(startIndex){
     document.getElementById('start-screen').classList.add('hidden');
@@ -1158,10 +1211,21 @@
 
   requestAnimationFrame(loop);
 
-  // Test-only hook: exposes generated level data and physics safety
-  // constants so an external test suite can assert invariants (e.g. "no
-  // platform gap exceeds what a jump can cross") without duplicating the
-  // generation logic. Inert for real players — nothing reads this global
-  // during normal play.
-  window.__BLIP_TEST__ = { STAGES, MAX_JUMP_DX, MAX_JUMP_RISE, GROUND_Y, TOTAL_STAGES };
+  // Test-only hook: exposes generated level data, physics safety
+  // constants, and a live-state snapshot so an external test suite can
+  // assert invariants (e.g. "no platform gap exceeds what a jump can
+  // cross") and drive assertions on real gameplay state without
+  // duplicating any of this logic. Gated behind an explicit opt-in flag
+  // the page itself never sets — only a test harness that deliberately
+  // injects `window.__BLIP_TEST_ENABLED__ = true` before the script runs
+  // (see tests/game.spec.js) gets this global; ordinary players never do.
+  if(window.__BLIP_TEST_ENABLED__){
+    window.__BLIP_TEST__ = {
+      STAGES, MAX_JUMP_DX, MAX_JUMP_RISE, GROUND_Y, TOTAL_STAGES, reducedMotion,
+      getState: () => ({
+        score, comboStreak, bestComboStreak, checkpointReached,
+        currentStageIndex, won, paused,
+      }),
+    };
+  }
 })();

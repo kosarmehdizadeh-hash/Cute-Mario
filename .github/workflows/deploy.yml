@@ -1,10 +1,13 @@
 name: Deploy to server
 
-# Runs on every push to any claude/* branch (covers every future session's
-# branch automatically, without needing to edit this file each time), or
-# manually from the Actions tab.
+# Gated on CI: this only runs once the "CI" workflow (lint + tests) has
+# completed successfully for a claude/** branch, so a red check never
+# gets auto-deployed. `workflow_dispatch` remains available as a manual
+# override from the Actions tab.
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches:
       - 'claude/**'
   workflow_dispatch:
@@ -12,9 +15,12 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
       - name: Copy project files to server via SCP (SSH key auth)
         uses: appleboy/scp-action@v0.1.7

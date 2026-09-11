@@ -112,13 +112,13 @@ canvas{
 }
 .start-actions{ display:flex; flex-direction:column; gap:10px; align-items:center; }
 .small-link-btn{
-  background:none; border:none; box-shadow:none; color:#8a7a75;
+  background:none; border:none; box-shadow:none; color:#6b5a52;
   font-size:13px; font-weight:700; text-decoration:underline; padding:4px;
   cursor:pointer;
 }
 button{
   background:linear-gradient(180deg,#ffb84c,#ff9a3c);
-  border:none; color:#fff; font-weight:700; font-size:clamp(14px,4vw,16px);
+  border:none; color:#2b1d10; font-weight:700; font-size:clamp(14px,4vw,16px);
   padding:12px 28px; border-radius:999px; cursor:pointer;
   box-shadow:0 6px 0 #d9781f;
   font-family:inherit;
